@@ -1,260 +1,540 @@
-from flask import Flask, request
-import requests
-import os
-import threading
-import time
-
-app = Flask(__name__)
-TOKEN = os.getenv("TOKEN")
-BOT_ID = os.getenv("BOT_ID", "")
-TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}"
-
-# Armazena última mensagem de boas-vindas por chat_id
-last_welcome_message = {}
-
-# Armazena usuários aguardando confirmação: {user_id: chat_id}
-pending_users = {}
-
-# Gatilhos de compra
-TRIGGERS = ["como comprar", "onde comprar", "quero comprar", "comprar rhap", "como compra"]
-
-# --- FUNÇÕES ---
-def remove_user_if_pending(chat_id, user_id):
-    """Remove usuário se não confirmar em 60s"""
-    time.sleep(60)
-    if user_id in pending_users:
-        try:
-            requests.post(f"{TELEGRAM_API}/banChatMember", json={"chat_id": chat_id, "user_id": user_id})
-            time.sleep(1)
-            requests.post(f"{TELEGRAM_API}/unbanChatMember", json={"chat_id": chat_id, "user_id": user_id})
-        except:
-            pass
-        pending_users.pop(user_id, None)
-
-def send_captcha(chat_id, user_id, first_name):
-    """Envia CAPTCHA no grupo"""
-    message = f"👋 Olá, {first_name}! Para confirmar que você é humano, clique no botão abaixo:"
-    keyboard = {"inline_keyboard": [[{"text": "✅ Sou humano", "callback_data": f"captcha_{user_id}"}]]}
-    payload = {"chat_id": chat_id, "text": message, "reply_markup": keyboard}
-    response = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload)
-    
-    if response.status_code == 200:
-        msg_data = response.json()
-        if msg_data.get("ok"):
-            pending_users[user_id] = chat_id
-            thread = threading.Thread(target=remove_user_if_pending, args=(chat_id, user_id))
-            thread.daemon = True
-            thread.start()
-
-def send_welcome(chat_id, first_name):
-    global last_welcome_message
-
-    # Apaga mensagem anterior
-    if chat_id in last_welcome_message:
-        try:
-            requests.post(f"{TELEGRAM_API}/deleteMessage", json={
-                "chat_id": chat_id,
-                "message_id": last_welcome_message[chat_id]
-            })
-        except:
-            pass
-
-    # Mensagem de boas-vindas
-    welcome_text = (
-        f"🎮 Bem-vindo, {first_name}, à Comunidade Rhapsody!\n\n"
-        "Este é o espaço oficial para quem acredita no poder da gamificação e das novas formas de engajar pessoas.\n\n"
-        "Aqui você vai:\n"
-        "✅ Descobrir novidades do projeto e do token RHAP\n"
-        "✅ Entender como funciona nosso ecossistema de recompensas\n"
-        "✅ Participar de eventos, ativações e conversas sobre o futuro digital\n"
-        "✅ Conectar-se com outras pessoas que estão construindo junto\n\n"
-        "🚀 Rhapsody Protocol — A nova camada do engajamento digital.\n\n"
-    )
-
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "🌐 Site oficial", "url": "https://www.rhapsodycoin.com"}],
-            [
-                {"text": "📌 FAQ", "callback_data": "faq"},
-                {"text": "🛒 Compre RHAP", "url": "https://rhapsody.criptocash.app/"}
-            ],
-            [{"text": "📱 Redes sociais", "callback_data": "redes_sociais"}]
-        ]
-    }
-
-    payload = {
-        "chat_id": chat_id,
-        "text": welcome_text,
-        "parse_mode": "Markdown",
-        "reply_markup": keyboard,
-        "disable_web_page_preview": True
-    }
-
-    response = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload)
-    if response.status_code == 200:
-        msg_data = response.json()
-        if msg_data.get("ok"):
-            last_welcome_message[chat_id] = msg_data["result"]["message_id"]
-
-def send_faq(chat_id):
-    faq_text = (
-        "📌 *Aqui está a lista de perguntas frequentes atualizada sobre o Rhapsody Protocol*\n\n"
-        "*Em que situação está o projeto atualmente?*\n"
-        "O Rhapsody Protocol está em fase de pré-venda, que vai até 20 de janeiro de 2026 na plataforma CriptoCash. O lançamento oficial do token $RHAP ocorrerá em 23 de janeiro de 2026 na Bitcoin Brasil (BBT). A Musicplayce é apenas o primeiro case de uso dentro do protocolo — uma demonstração prática de como empresas podem integrar gamificação, NFTs e recompensas com RHAP.\n\n"
-        "*O token $RHAP já foi lançado?*\n"
-        "Não, o token $RHAP ainda não foi lançado publicamente. Ele será disponibilizado oficialmente em 23 de janeiro de 2026 na Bitcoin Brasil, após encerrar a pré-venda em 20 de janeiro na CriptoCash.\n\n"
-        "*Em qual rede o projeto e o token serão lançados?*\n"
-        "O Rhapsody Protocol e o token $RHAP operam na rede Ethereum, seguindo o padrão ERC-20. Essa escolha garante compatibilidade com wallets amplamente utilizadas, segurança e acesso ao ecossistema DeFi consolidado.\n\n"
-        "*Qual o supply total do token $RHAP?*\n"
-        "O supply total é fixo em 1.000.000.000 (1 bilhão) de tokens RHAP. Não haverá novas emissões além desse limite, garantindo escassez programada.\n\n"
-        "*Qual será a função do token $RHAP?*\n"
-        "O $RHAP é o token utilitário central do ecossistema. Ele será usado para:\n"
-        "- Acessar e interagir com aplicações gamificadas (como Musicplayce),\n"
-        "- Participar de mecânicas de gacha, staking e recompensas,\n"
-        "- Mintar NFTs certificados com utilidade real,\n"
-        "- Futuramente, votar em decisões da DAO e pagar por serviços dentro do protocolo.\n\n"
-        "*Qual a função dos usuários nessa fase do projeto?*\n"
-        "Nesta fase, os usuários podem:\n"
-        "- Participar da pré-venda (até 20/01/2026 em CriptoCash),\n"
-        "- Se preparar para o lançamento oficial (23/01/2026 na Bitcoin Brasil),\n"
-        "- Acompanhar os cases de uso como a Musicplayce (apenas um exemplo de aplicação),\n"
-        "- *Tornar-se um parceiro de divulgação*: se você tem um canal, comunidade ou audiência e quer promover o Rhapsody Protocol, inscreva-se no programa de afiliados e ganhe até *15% de comissão* sobre todas as vendas geradas por você!\n\n"
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rhaps Catcher</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
         
-    )
+        body {
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #0a0e27;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            width: 100%;
+            height: 100%;
+            padding: 20px;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(15, 23, 42, 0.9);
+            padding: 20px 30px;
+            border-radius: 15px;
+            box-shadow: 0 0 30px rgba(34, 197, 94, 0.3);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        
+        .title {
+            font-size: 28px;
+            font-weight: bold;
+            color: #22c55e;
+            text-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
+        }
+        
+        .stats {
+            display: flex;
+            gap: 40px;
+        }
+        
+        .stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #22c55e;
+            text-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
+        }
+        
+        .game-wrapper {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        
+        canvas {
+            background: #000;
+            border-radius: 15px;
+            box-shadow: 0 0 50px rgba(34, 197, 94, 0.5), inset 0 0 50px rgba(34, 197, 94, 0.1);
+            display: block;
+            cursor: crosshair;
+            max-width: 100%;
+            max-height: 100%;
+            border: 2px solid rgba(34, 197, 94, 0.3);
+        }
+        
+        .footer {
+            background: rgba(15, 23, 42, 0.9);
+            padding: 15px 30px;
+            border-radius: 15px;
+            text-align: center;
+            font-size: 14px;
+            color: #888;
+            box-shadow: 0 0 30px rgba(34, 197, 94, 0.3);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        
+        .instructions {
+            display: flex;
+            gap: 30px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .instruction-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #22c55e;
+        }
+        
+        /* Mobile controls */
+        .mobile-controls {
+            display: none;
+            gap: 20px;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .mobile-controls.show {
+            display: flex;
+        }
+        
+        .control-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: rgba(34, 197, 94, 0.3);
+            border: 2px solid rgba(34, 197, 94, 0.6);
+            color: #22c55e;
+            font-size: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.1s;
+            box-shadow: 0 0 15px rgba(34, 197, 94, 0.3);
+        }
+        
+        .control-btn:active {
+            background: rgba(34, 197, 94, 0.6);
+            box-shadow: 0 0 30px rgba(34, 197, 94, 0.6);
+            transform: scale(0.95);
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                gap: 10px;
+                padding: 10px;
+            }
+            
+            .header {
+                padding: 10px 15px;
+                flex-wrap: wrap;
+                gap: 15px;
+            }
+            
+            .title {
+                font-size: 20px;
+            }
+            
+            .stats {
+                gap: 20px;
+            }
+            
+            .stat-value {
+                font-size: 18px;
+            }
+            
+            .footer {
+                padding: 10px 15px;
+                font-size: 12px;
+            }
+            
+            .instructions {
+                gap: 15px;
+                flex-direction: column;
+            }
+            
+            .instruction-item {
+                font-size: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="title">🪙 Rhaps Catcher</div>
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-label">Moedas Capturadas</div>
+                    <div class="stat-value" id="score">0</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">Recorde Pessoal</div>
+                    <div class="stat-value" id="highScore">0</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="game-wrapper">
+            <canvas id="gameCanvas"></canvas>
+        </div>
+        
+        <div class="mobile-controls" id="mobileControls">
+            <button class="control-btn" id="leftBtn">←</button>
+            <button class="control-btn" id="rightBtn">→</button>
+        </div>
+        
+        <div class="footer">
+            <div class="instructions">
+                <div class="instruction-item" id="desktopHint">
+                    🖱️ <strong>Mouse:</strong> Mova o personagem
+                </div>
+                <div class="instruction-item">
+                    ⚡ <strong>Dica:</strong> A velocidade aumenta conforme você pega moedas!
+                </div>
+            </div>
+        </div>
+    </div>
 
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "📘 Leia nosso Whitepaper", "url": "https://rhapsody-coin.gitbook.io/rhapsody-protocol/"}]
-        ]
-    }
-
-    payload = {
-        "chat_id": chat_id,
-        "text": faq_text,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True,
-        "reply_markup": keyboard
-    }
-    requests.post(f"{TELEGRAM_API}/sendMessage", json=payload)
-
-def send_social_media(chat_id):
-    payload = {
-        "chat_id": chat_id,
-        "text": "📱 *Redes Sociais*:\n\n"
-                "📸 [Instagram](https://instagram.com/rhapsodycoin)\n"
-                "🔗 [Twitter/X](https://twitter.com/rhapsodycoin)\n"
-                "💼 [LinkedIn](https://linkedin.com/company/rhapsody-coin)\n"
-                "💬 [Telegram Oficial](https://t.me/rhapsodycoin)",
-        "parse_mode": "Markdown"
-    }
-    requests.post(f"{TELEGRAM_API}/sendMessage", json=payload)
-
-# --- WEBHOOK ---
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    data = request.get_json()
-
-    if data and "message" in data:
-        message = data["message"]
-        chat_id = message["chat"]["id"]
-
-        # Novo membro → CAPTCHA
-        if "new_chat_member" in message:
-            new_member = message["new_chat_member"]
-            user_id = new_member.get("id")
-            if str(user_id) == BOT_ID:
-                return "OK"
-            first_name = new_member.get("first_name", "amigo")
-            send_captcha(chat_id, user_id, first_name)
-            return "OK"
-
-        # Mensagens de texto
-        if "text" in message:
-            text = message["text"].lower().strip()
-            first_name = message["from"].get("first_name", "amigo")
-
-            if text == "/start":
-                if message["chat"]["type"] == "private":
-                    send_welcome(chat_id, first_name)
-                else:
-                    reply = {
-                        "chat_id": chat_id,
-                        "text": "👋 Olá! Para ver todas as opções, envie /start em uma conversa privada comigo.",
-                        "reply_to_message_id": message["message_id"]
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        function resizeCanvas() {
+            const wrapper = document.querySelector('.game-wrapper');
+            canvas.width = Math.min(900, wrapper.clientWidth - 40);
+            canvas.height = Math.min(700, wrapper.clientHeight - 40);
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        const player = {
+            x: canvas.width / 2 - 50,
+            y: canvas.height - 120,
+            width: 100,
+            height: 100,
+            speed: 8,
+            targetX: canvas.width / 2 - 50
+        };
+        
+        let coins = [];
+        let score = 0;
+        let highScore = parseInt(localStorage.getItem('rhapsHighScore')) || 0;
+        let gameSpeed = 2;
+        let spawnRate = 120;
+        let spawnCounter = 0;
+        
+        const keys = {};
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+        
+        let mouseX = canvas.width / 2;
+        
+        // Mouse input
+        document.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            if (e.clientX >= rect.left && e.clientX <= rect.right) {
+                mouseX = e.clientX - rect.left;
+            }
+        });
+        
+        // Touch input (para celular)
+        document.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            if (e.touches.length > 0) {
+                const touch = e.touches[0];
+                if (touch.clientX >= rect.left && touch.clientX <= rect.right) {
+                    mouseX = touch.clientX - rect.left;
+                }
+            }
+        }, { passive: false });
+        
+        document.getElementById('highScore').textContent = highScore;
+        
+        // Detectar se é mobile e mostrar controles
+        const isMobile = () => {
+            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        };
+        
+        const mobileControls = document.getElementById('mobileControls');
+        const desktopHint = document.getElementById('desktopHint');
+        
+        if (isMobile()) {
+            mobileControls.classList.add('show');
+            desktopHint.style.display = 'none';
+        }
+        
+        // Botões mobile
+        const leftBtn = document.getElementById('leftBtn');
+        const rightBtn = document.getElementById('rightBtn');
+        
+        let leftPressed = false;
+        let rightPressed = false;
+        
+        leftBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            leftPressed = true;
+        });
+        leftBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            leftPressed = false;
+        });
+        leftBtn.addEventListener('mousedown', () => {
+            leftPressed = true;
+        });
+        leftBtn.addEventListener('mouseup', () => {
+            leftPressed = false;
+        });
+        
+        rightBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            rightPressed = true;
+        });
+        rightBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            rightPressed = false;
+        });
+        rightBtn.addEventListener('mousedown', () => {
+            rightPressed = true;
+        });
+        rightBtn.addEventListener('mouseup', () => {
+            rightPressed = false;
+        });
+        
+        function spawnCoin() {
+            const coin = {
+                x: Math.random() * (canvas.width - 40),
+                y: -40,
+                width: 40,
+                height: 40,
+                speed: gameSpeed
+            };
+            coins.push(coin);
+        }
+        
+        function update() {
+            if (keys['ArrowLeft'] || keys['a'] || keys['A'] || leftPressed) {
+                player.targetX = Math.max(0, player.targetX - player.speed);
+            }
+            if (keys['ArrowRight'] || keys['d'] || keys['D'] || rightPressed) {
+                player.targetX = Math.min(canvas.width - player.width, player.targetX + player.speed);
+            }
+            
+            const diff = mouseX - (player.x + player.width / 2);
+            if (Math.abs(diff) > 20) {
+                player.targetX = mouseX - player.width / 2;
+                player.targetX = Math.max(0, Math.min(canvas.width - player.width, player.targetX));
+            }
+            
+            if (Math.abs(player.x - player.targetX) > 2) {
+                player.x += (player.targetX - player.x) * 0.15;
+            } else {
+                player.x = player.targetX;
+            }
+            
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) {
+                player.x = canvas.width - player.width;
+            }
+            
+            spawnCounter++;
+            if (spawnCounter > spawnRate) {
+                spawnCoin();
+                spawnCounter = 0;
+            }
+            
+            coins.forEach((coin, index) => {
+                coin.y += coin.speed;
+                
+                if (coin.y > canvas.height) {
+                    coins.splice(index, 1);
+                }
+                
+                if (rectCollision(player, coin)) {
+                    coins.splice(index, 1);
+                    score++;
+                    document.getElementById('score').textContent = score;
+                    
+                    if (score % 5 === 0) {
+                        gameSpeed += 0.3;
+                        spawnRate = Math.max(60, spawnRate - 5);
                     }
-                    requests.post(f"{TELEGRAM_API}/sendMessage", json=reply)
-                return "OK"
-
-            # Gatilhos de compra
-            for trigger in TRIGGERS:
-                if trigger in text:
-                    keyboard = {"inline_keyboard": [[{"text": "🛒 Vá para a Loja", "url": "https://rhapsody.criptocash.app/"}]]}
-                    payload = {
-                        "chat_id": chat_id,
-                        "video": "BAACAgEAAxkBAAMyaTtJds7IEDJZKrPlUClLPkQ6gdsAAsMGAAKQcthFypomT3bj9iM2BA",
-                        "caption": "🎥 Aqui está como comprar $RHAP!",
-                        "reply_markup": keyboard
+                    
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem('rhapsHighScore', highScore);
+                        document.getElementById('highScore').textContent = highScore;
                     }
-                    requests.post(f"{TELEGRAM_API}/sendVideo", json=payload)
-                    break
-            return "OK"
-
-    # Callbacks (botões)
-    if data and "callback_query" in data:
-        callback = data["callback_query"]
-        chat_id = callback["message"]["chat"]["id"]
-        data_value = callback["data"]
-        from_user_id = callback["from"]["id"]
-
-        # CAPTCHA
-        if data_value.startswith("captcha_"):
-            try:
-                target_user_id = int(data_value.split("_", 1)[1])
-                if from_user_id == target_user_id and target_user_id in pending_users:
-                    pending_users.pop(target_user_id, None)
-                    # Apaga CAPTCHA
-                    requests.post(f"{TELEGRAM_API}/deleteMessage", json={
-                        "chat_id": chat_id,
-                        "message_id": callback["message"]["message_id"]
-                    })
-                    # Envia boas-vindas
-                    first_name = callback["from"].get("first_name", "amigo")
-                    send_welcome(chat_id, first_name)
-                    requests.post(f"{TELEGRAM_API}/answerCallbackQuery", json={
-                        "callback_query_id": callback["id"],
-                        "text": "✅ Bem-vindo à Comunidade Rhapsody!",
-                        "show_alert": False
-                    })
-                else:
-                    requests.post(f"{TELEGRAM_API}/answerCallbackQuery", json={
-                        "callback_query_id": callback["id"],
-                        "text": "❌ Este CAPTCHA não é para você.",
-                        "show_alert": True
-                    })
-            except:
-                pass
-            return "OK"
-
-        # Outros botões
-        requests.post(f"{TELEGRAM_API}/answerCallbackQuery", json={"callback_query_id": callback["id"]})
-        if data_value == "faq":
-            send_faq(chat_id)
-        elif data_value == "redes_sociais":
-            send_social_media(chat_id)
-        return "OK"
-
-    return "OK"
-
-# --- ROTAS AUXILIARES ---
-@app.route("/")
-def home():
-    return "✅ Bot ativo! | Rhapsody Protocol — Gamificação e engajamento digital."
-
-@app.route("/setwebhook")
-def set_webhook():
-    webhook_url = f"https://{request.host}/{TOKEN}"
-    response = requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/setWebhook",
-        data={"url": webhook_url}
-    )
-    return f"Webhook configurado para: {webhook_url}\nResposta: {response.json()}"
+                }
+            });
+        }
+        
+        function rectCollision(rect1, rect2) {
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+        
+        function draw() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.strokeStyle = 'rgba(34, 197, 94, 0.1)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < canvas.width; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, canvas.height);
+                ctx.stroke();
+            }
+            for (let i = 0; i < canvas.height; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(canvas.width, i);
+                ctx.stroke();
+            }
+            
+            ctx.save();
+            ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
+            
+            ctx.shadowColor = 'rgba(34, 197, 94, 0.5)';
+            ctx.shadowBlur = 20;
+            
+            ctx.fillStyle = '#00d4ff';
+            ctx.shadowColor = 'rgba(0, 212, 255, 0.6)';
+            ctx.shadowBlur = 15;
+            ctx.fillRect(-20, -10, 40, 45);
+            
+            ctx.fillStyle = '#22c55e';
+            ctx.shadowColor = 'rgba(34, 197, 94, 0.6)';
+            ctx.shadowBlur = 15;
+            ctx.beginPath();
+            ctx.arc(0, -25, 18, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#00ffff';
+            ctx.shadowColor = 'rgba(0, 255, 255, 0.8)';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(-8, -28, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(8, -28, 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#000';
+            ctx.shadowColor = 'rgba(0, 0, 0, 0)';
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(-8, -28, 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(8, -28, 2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.strokeStyle = '#22c55e';
+            ctx.lineWidth = 3;
+            ctx.shadowColor = 'rgba(34, 197, 94, 0.5)';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(0, -20, 6, 0, Math.PI);
+            ctx.stroke();
+            
+            ctx.strokeStyle = '#00ffff';
+            ctx.lineWidth = 2;
+            ctx.shadowColor = 'rgba(0, 255, 255, 0.5)';
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.moveTo(-12, -35);
+            ctx.lineTo(-15, -45);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(12, -35);
+            ctx.lineTo(15, -45);
+            ctx.stroke();
+            
+            ctx.restore();
+            
+            coins.forEach(coin => {
+                ctx.save();
+                ctx.translate(coin.x + coin.width / 2, coin.y + coin.height / 2);
+                
+                ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
+                ctx.shadowBlur = 20;
+                
+                ctx.fillStyle = '#FFD700';
+                ctx.beginPath();
+                ctx.arc(0, 0, 20, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.strokeStyle = '#FFA500';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                
+                ctx.fillStyle = '#FF6B35';
+                ctx.font = 'bold 24px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('₿', 0, 0);
+                
+                ctx.restore();
+            });
+            
+            ctx.fillStyle = '#22c55e';
+            ctx.font = 'bold 14px Arial';
+            ctx.shadowColor = 'rgba(34, 197, 94, 0.5)';
+            ctx.shadowBlur = 8;
+            ctx.fillText(`⚡ ${gameSpeed.toFixed(1)}x`, 15, 25);
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        gameLoop();
+    </script>
+</body>
+</html>
