@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Harmonic Collector</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+  <style>
+    body { margin: 0; background: #000; }
+    #ui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: Arial;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">RHAP: <span id="score">0</span> | Recorde: <span id="highscore">0</span></div>
+
+  <script>
+    const config = {
+      type: Phaser.AUTO,
+      width: window.innerWidth,
+      height: window.innerHeight,
+      backgroundColor: '#0f0c29',
+      physics: {
+        default: 'arcade',
+        arcade: { gravity: { y: 0 } }
+      },
+      scene: {
+        preload: preload,
+        create: create,
+        update: update
+      }
+    };
+
+    let player;
+    let coins;
+    let score = 0;
+    let highScore = localStorage.getItem('harmonicHighScore') || 0;
+
+    const game = new Phaser.Game(config);
+
+    function preload() {}
+
+    function create() {
+      // Jogador: círculo verde
+      player = this.add.circle(400, 500, 20, 0x00FF00);
+      this.physics.add.existing(player, false);
+      player.body.setCollideWorldBounds(true);
+
+      // Moeda: círculo roxo
+      coins = this.physics.add.group();
+
+      // Gerar moedas a cada 2 segundos
+      this.time.addEvent({
+        delay: 2000,
+        callback: () => {
+          const x = Phaser.Math.Between(50, 750);
+          const coin = this.add.circle(x, -20, 15, 0x8A2BE2);
+          this.physics.add.existing(coin, true);
+          coin.body.setVelocityY(100);
+          coins.add(coin);
+        },
+        callbackScope: this,
+        loop: true
+      });
+
+      // Colisão
+      this.physics.add.overlap(player, coins, collectCoin, null, this);
+
+      // Atualizar UI
+      document.getElementById('highscore').textContent = highScore;
+    }
+
+    function update() {
+      // Movimento do jogador com teclado
+      if (this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).isDown) {
+        player.x -= 5;
+      } else if (this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).isDown) {
+        player.x += 5;
+      }
+
+      // Limites
+      player.x = Phaser.Math.Clamp(player.x, 20, 780);
+
+      // Atualizar pontuação
+      document.getElementById('score').textContent = score;
+    }
+
+    function collectCoin(player, coin) {
+      coin.destroy();
+      score++;
+      if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('harmonicHighScore', highScore);
+      }
+      document.getElementById('highscore').textContent = highScore;
+    }
+  </script>
+</body>
+</html>
